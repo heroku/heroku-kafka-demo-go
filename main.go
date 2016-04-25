@@ -60,6 +60,8 @@ func main() {
 	envdecode.MustDecode(&appconfig)
 
 	client := newKafkaClient(&appconfig)
+	client.receivedMessages = make([]Message, 0)
+
 	go client.consumeMessages()
 	defer client.producer.Close()
 	defer client.consumer.Close()
