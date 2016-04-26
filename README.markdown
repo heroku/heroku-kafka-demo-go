@@ -21,7 +21,7 @@ $ heroku addons:create heroku-kafka:beta-dev
 $ heroku kafka:wait
 ```
 
-Create the sample topic. For the purposes of this demo, it works best if you have just a single partition, but production apps can and should use more partitions:
+Create the sample topic, by default the topic will have 32 partitions:
 
 ```
 $ heroku kafka:create messages --partitions 1
