@@ -17,14 +17,14 @@ Create a heroku app with Kafka attached:
 
 ```
 $ heroku create
-$ heroku addons:create heroku-kafka:beta-dev
+$ heroku addons:create heroku-kafka:standard-0
 $ heroku kafka:wait
 ```
 
 Create the sample topic, by default the topic will have 32 partitions:
 
 ```
-$ heroku kafka:create messages
+$ heroku kafka:topics:create messages
 ```
 
 Deploy to Heroku and open the app:
