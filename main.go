@@ -19,10 +19,13 @@ import (
 
 type AppConfig struct {
 	Kafka struct {
-		Url           string `env:"KAFKA_URL,required"`
+		URL           string `env:"KAFKA_URL,required"`
 		TrustedCert   string `env:"KAFKA_TRUSTED_CERT,required"`
 		ClientCertKey string `env:"KAFKA_CLIENT_CERT_KEY,required"`
 		ClientCert    string `env:"KAFKA_CLIENT_CERT,required"`
+		Prefix        string `env:"KAFKA_PREFIX"`
+		Topic         string `env:"KAFKA_TOPIC,default=messages"`
+		ConsumerGroup string `env:"KAFKA_CONSUMER_GROUP,default=heroku-kafka-demo-go"`
 	}
 
 	Web struct {
@@ -49,11 +52,7 @@ type MessageMetadata struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
-const (
-	ConsumerId    = "heroku-kafka-demo-go"
-	ConsumerGroup = "heroku-kafka-demo-go-group"
-	KafkaTopic    = "messages"
-)
+var topic string
 
 func main() {
 	appconfig := AppConfig{}
@@ -61,6 +60,8 @@ func main() {
 
 	client := newKafkaClient(&appconfig)
 	client.receivedMessages = make([]Message, 0)
+
+	topic = appconfig.topic()
 
 	go client.consumeMessages()
 	defer client.producer.Close()
@@ -101,7 +102,7 @@ func (kc *KafkaClient) messagesPOST(c *gin.Context) {
 		log.Fatal(err)
 	}
 	msg := &sarama.ProducerMessage{
-		Topic: KafkaTopic,
+		Topic: topic,
 		Key:   sarama.ByteEncoder(c.Request.RemoteAddr),
 		Value: sarama.ByteEncoder(message),
 	}
@@ -140,7 +141,7 @@ func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
 // Setup the Kafka client for producing and consumer messages.
 // Use the specified configuration environment variables.
 func newKafkaClient(config *AppConfig) *KafkaClient {
-	tlsConfig := config.createTlsConfig()
+	tlsConfig := config.createTLSConfig()
 	brokerAddrs := config.brokerAddresses()
 	return &KafkaClient{
 		consumer: config.createKafkaConsumer(brokerAddrs, tlsConfig),
@@ -149,7 +150,7 @@ func newKafkaClient(config *AppConfig) *KafkaClient {
 }
 
 // Create the TLS context, using the key and certificates provided.
-func (ac *AppConfig) createTlsConfig() *tls.Config {
+func (ac *AppConfig) createTLSConfig() *tls.Config {
 	cert, err := tls.X509KeyPair([]byte(ac.Kafka.ClientCert), []byte(ac.Kafka.ClientCertKey))
 	if err != nil {
 		log.Fatal(err)
@@ -178,15 +179,19 @@ func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) *clus
 	config.Net.TLS.Config = tc
 	config.Net.TLS.Enable = true
 	config.Group.PartitionStrategy = cluster.StrategyRoundRobin
-	config.ClientID = ConsumerId
+	config.ClientID = ac.Kafka.ConsumerGroup
 	config.Consumer.Return.Errors = true
+
+	topic := ac.topic()
+
+	log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
 
 	err := config.Validate()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	consumer, err := cluster.NewConsumer(brokers, ConsumerGroup, []string{KafkaTopic}, config)
+	consumer, err := cluster.NewConsumer(brokers, ac.group(), []string{topic}, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -200,7 +205,7 @@ func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) saram
 	config.Net.TLS.Config = tc
 	config.Net.TLS.Enable = true
 	config.Producer.Return.Errors = true
-	config.ClientID = ConsumerId
+	config.ClientID = ac.Kafka.ConsumerGroup
 
 	err := config.Validate()
 	if err != nil {
@@ -216,7 +221,7 @@ func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) saram
 
 // Extract the host:port pairs from the Kafka URL(s)
 func (ac *AppConfig) brokerAddresses() []string {
-	urls := strings.Split(ac.Kafka.Url, ",")
+	urls := strings.Split(ac.Kafka.URL, ",")
 	addrs := make([]string, len(urls))
 	for i, v := range urls {
 		u, err := url.Parse(v)
@@ -226,4 +231,26 @@ func (ac *AppConfig) brokerAddresses() []string {
 		addrs[i] = u.Host
 	}
 	return addrs
+}
+
+// Prepends prefix to topic if provided
+func (ac *AppConfig) topic() string {
+	topic := ac.Kafka.Topic
+
+	if ac.Kafka.Prefix != "" {
+		topic = strings.Join([]string{ac.Kafka.Prefix, topic}, "")
+	}
+
+	return topic
+}
+
+// Prepend prefix to consumer group if provided
+func (ac *AppConfig) group() string {
+	group := ac.Kafka.ConsumerGroup
+
+	if ac.Kafka.Prefix != "" {
+		group = strings.Join([]string{ac.Kafka.Prefix, group}, "")
+	}
+
+	return group
 }
