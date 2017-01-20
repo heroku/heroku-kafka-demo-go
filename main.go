@@ -24,7 +24,7 @@ type AppConfig struct {
 		ClientCertKey string `env:"KAFKA_CLIENT_CERT_KEY,required"`
 		ClientCert    string `env:"KAFKA_CLIENT_CERT,required"`
 		Prefix        string `env:"KAFKA_PREFIX"`
-		Topic         string `env:"KAFKA_TOPIC"`
+		Topic         string `env:"KAFKA_TOPIC,default=messages"`
 		ConsumerGroup string `env:"KAFKA_CONSUMER_GROUP,default=heroku-kafka-demo-go"`
 	}
 
@@ -235,15 +235,7 @@ func (ac *AppConfig) brokerAddresses() []string {
 
 // Prepends prefix to topic if provided
 func (ac *AppConfig) topic() string {
-
-	var topic string
-
-	if ac.Kafka.Topic != "" {
-		topic = ac.Kafka.Topic
-
-	} else {
-		topic = "messages"
-	}
+	topic := ac.Kafka.Topic
 
 	if ac.Kafka.Prefix != "" {
 		topic = strings.Join([]string{ac.Kafka.Prefix, topic}, "")
@@ -254,7 +246,6 @@ func (ac *AppConfig) topic() string {
 
 // Prepend prefix to consumer group if provided
 func (ac *AppConfig) group() string {
-
 	group := ac.Kafka.ConsumerGroup
 
 	if ac.Kafka.Prefix != "" {
