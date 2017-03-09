@@ -27,6 +27,12 @@ Create the sample topic, by default the topic will have 32 partitions:
 $ heroku kafka:topics:create messages
 ```
 
+Create the sample consumer group if not on a dedicated plan:
+
+```
+$ heroku kafka:consumer-groups:create heroku-kafka-demo-go
+```
+
 Deploy to Heroku and open the app:
 
 ```
