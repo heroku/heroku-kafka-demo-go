@@ -147,7 +147,7 @@ func newKafkaClient(config *AppConfig) *KafkaClient {
 
 	// verify broker certs
 	for _, b := range brokerAddrs {
-		ok, err := config.verifyServerCert(b)
+		ok, err := verifyServerCert(tlsConfig, config.Kafka.TrustedCert, b)
 		if err != nil {
 			log.Fatal("Get Server Cert Error: ", err)
 		}
@@ -164,11 +164,9 @@ func newKafkaClient(config *AppConfig) *KafkaClient {
 	}
 }
 
-func (ac *AppConfig) verifyServerCert(url string) (bool, error) {
-	tlsConfig := ac.createTLSConfig()
-
+func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
 	// Create connection to server
-	conn, err := tls.Dial("tcp", url, tlsConfig)
+	conn, err := tls.Dial("tcp", url, tc)
 	if err != nil {
 		return false, err
 	}
@@ -177,7 +175,7 @@ func (ac *AppConfig) verifyServerCert(url string) (bool, error) {
 	serverCert := conn.ConnectionState().PeerCertificates[0]
 
 	roots := x509.NewCertPool()
-	ok := roots.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
+	ok := roots.AppendCertsFromPEM([]byte(caCert))
 	if !ok {
 		return false, errors.New("Unable to parse Trusted Cert")
 	}
