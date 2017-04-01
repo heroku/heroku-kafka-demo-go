@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -143,26 +144,74 @@ func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
 func newKafkaClient(config *AppConfig) *KafkaClient {
 	tlsConfig := config.createTLSConfig()
 	brokerAddrs := config.brokerAddresses()
+
+	// verify broker certs
+	for _, b := range brokerAddrs {
+		ok, err := config.verifyServerCert(b)
+		if err != nil {
+			log.Fatal("Get Server Cert Error: ", err)
+		}
+
+		if !ok {
+			log.Fatalf("Broker %s has invalid certificate!", b)
+		}
+	}
+	log.Println("All broker server certificates are valid!")
+
 	return &KafkaClient{
 		consumer: config.createKafkaConsumer(brokerAddrs, tlsConfig),
 		producer: config.createKafkaProducer(brokerAddrs, tlsConfig),
 	}
 }
 
+func (ac *AppConfig) verifyServerCert(url string) (bool, error) {
+	tlsConfig := ac.createTLSConfig()
+
+	// Create connection to server
+	conn, err := tls.Dial("tcp", url, tlsConfig)
+	if err != nil {
+		return false, err
+	}
+
+	// Pull servers cert
+	serverCert := conn.ConnectionState().PeerCertificates[0]
+
+	roots := x509.NewCertPool()
+	ok := roots.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
+	if !ok {
+		return false, errors.New("Unable to parse Trusted Cert")
+	}
+
+	// Verify Server Cert
+	opts := x509.VerifyOptions{Roots: roots}
+	if _, err := serverCert.Verify(opts); err != nil {
+		log.Println("Unable to verify Server Cert")
+		return false, err
+	}
+
+	return true, nil
+}
+
 // Create the TLS context, using the key and certificates provided.
 func (ac *AppConfig) createTLSConfig() *tls.Config {
+	roots := x509.NewCertPool()
+	ok := roots.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
+	if !ok {
+		log.Println("Unable to parse Root Cert:", ac.Kafka.TrustedCert)
+	}
+
+	// Setup certs for Sarama
 	cert, err := tls.X509KeyPair([]byte(ac.Kafka.ClientCert), []byte(ac.Kafka.ClientCertKey))
 	if err != nil {
 		log.Fatal(err)
 	}
-	certPool := x509.NewCertPool()
-	certPool.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
-		RootCAs:            certPool,
+		RootCAs:            roots,
 	}
+
 	tlsConfig.BuildNameToCertificate()
 	return tlsConfig
 }
