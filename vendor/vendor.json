@@ -1,0 +1,121 @@
+{
+	"comment": "",
+	"ignore": "test",
+    "heroku": {
+        "goVersion": "go1.8",
+        "install": ["."]
+    },
+	"package": [
+		{
+			"checksumSHA1": "gwnUhIsatKCPs5W7Rx5LfpF2RZA=",
+			"comment": "v1.8.0-27-g68920ff",
+			"path": "github.com/Shopify/sarama",
+			"revision": "68920ff1be3bbd31449ab1e2c255c50cedeb755c"
+		},
+		{
+			"checksumSHA1": "m23SRe2rSBoGp2AuzEhO/g6xs+4=",
+			"comment": "v1.0.2-22-g0cd44ad",
+			"path": "github.com/bsm/sarama-cluster",
+			"revision": "0cd44ad78b92bd308d568dad5611b995fdf556d3"
+		},
+		{
+			"checksumSHA1": "jPn+ddpol0RqzH9M4AHD7r7gECI=",
+			"path": "github.com/davecgh/go-spew/spew",
+			"revision": "1aaf839fb07e099361e445273993ccd9adc21b07"
+		},
+		{
+			"checksumSHA1": "a2yC46a1qsJomgY6rb+FkTFiqmE=",
+			"path": "github.com/davecgh/go-spew/spew/testdata",
+			"revision": "1aaf839fb07e099361e445273993ccd9adc21b07"
+		},
+		{
+			"checksumSHA1": "y2Kh4iPlgCPXSGTCcFpzePYdzzg=",
+			"comment": "v1.0.0-1-ged0319b",
+			"path": "github.com/eapache/go-resiliency/breaker",
+			"revision": "ed0319b32e66e3295db52695ba3ee493e823fbfe"
+		},
+		{
+			"checksumSHA1": "/uFMSIQuJjk4DfBCn3Xq76J7I4A=",
+			"comment": "v1.0.1-2-gd1df561",
+			"path": "github.com/eapache/queue",
+			"revision": "d1df561eb6b9ffdac8dd98f943e9e9096c76c059"
+		},
+		{
+			"checksumSHA1": "0tLUaPu821o4eu5/hQ0wVUQifPU=",
+			"comment": "v1.0rc1-266-g542be2f",
+			"path": "github.com/gin-gonic/gin",
+			"revision": "542be2fe77724f800fcab7eb6c01a4e597fb8506"
+		},
+		{
+			"checksumSHA1": "UsILDoIB2S7ra+w2fMdb85mX3HM=",
+			"comment": "v1.0rc1-266-g542be2f",
+			"path": "github.com/gin-gonic/gin/binding",
+			"revision": "542be2fe77724f800fcab7eb6c01a4e597fb8506"
+		},
+		{
+			"checksumSHA1": "v+H/cD17kjyZLCVSVc4hVle+Ydw=",
+			"comment": "v1.0rc1-266-g542be2f",
+			"path": "github.com/gin-gonic/gin/binding/example",
+			"revision": "542be2fe77724f800fcab7eb6c01a4e597fb8506"
+		},
+		{
+			"checksumSHA1": "PHv9FNb7YavJWtAHcY6ZgXmkmHs=",
+			"comment": "v1.0rc1-266-g542be2f",
+			"path": "github.com/gin-gonic/gin/render",
+			"revision": "542be2fe77724f800fcab7eb6c01a4e597fb8506"
+		},
+		{
+			"checksumSHA1": "FczzogSoZcKU3h21tCUyHzMsnBY=",
+			"path": "github.com/golang/protobuf/proto",
+			"revision": "bf531ff1a004f24ee53329dfd5ce0b41bfdc17df"
+		},
+		{
+			"checksumSHA1": "FAcShrpHCr+JlEzLtrlXb2509ng=",
+			"path": "github.com/golang/protobuf/proto/proto3_proto",
+			"revision": "bf531ff1a004f24ee53329dfd5ce0b41bfdc17df"
+		},
+		{
+			"checksumSHA1": "RALGvbAgYxXF4kEslE1AdI3eUlU=",
+			"path": "github.com/golang/protobuf/proto/testdata",
+			"revision": "bf531ff1a004f24ee53329dfd5ce0b41bfdc17df"
+		},
+		{
+			"checksumSHA1": "n/gwMWtYac7ZuQqevbTRwm+TQS8=",
+			"path": "github.com/golang/snappy",
+			"revision": "774a97396f7bfa4165e9dcf4bfa0747ea3edcc02"
+		},
+		{
+			"checksumSHA1": "uM5KjcMeTfIkWlOnfHiVgpax1yo=",
+			"path": "github.com/joeshaw/envdecode",
+			"revision": "80f1552844fb7b53167f2eece6242494396b2fe6"
+		},
+		{
+			"checksumSHA1": "hX+j017F4PEtIUGflAneDtLC6hs=",
+			"comment": "v1.0",
+			"path": "github.com/klauspost/crc32",
+			"revision": "19b0b332c9e4516a6370a0456e6182c3b5036720"
+		},
+		{
+			"checksumSHA1": "b0T0Hzd+zYk+OCDTFMps+jwa/nY=",
+			"path": "github.com/manucorporat/sse",
+			"revision": "ee05b128a739a0fb76c7ebd3ae4810c1de808d6d"
+		},
+		{
+			"checksumSHA1": "pancewZW3HwGvpDwfH5Imrbadc4=",
+			"path": "golang.org/x/net/context",
+			"revision": "fb93926129b8ec0056f2f458b1f519654814edf0"
+		},
+		{
+			"checksumSHA1": "9+TP2NPlTWXoRndq02uwZW26AqI=",
+			"comment": "v8.17.1",
+			"path": "gopkg.in/go-playground/validator.v8",
+			"revision": "014792cf3e266caff1e916876be12282b33059e0"
+		},
+		{
+			"checksumSHA1": "+OgOXBoiQ+X+C2dsAeiOHwBIEH0=",
+			"path": "gopkg.in/yaml.v2",
+			"revision": "a83829b6f1293c91addabc89d0571c246397bbf4"
+		}
+	],
+	"rootPath": "github.com/heroku/heroku-kafka-demo-go"
+}
