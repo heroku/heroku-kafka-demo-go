@@ -252,6 +252,7 @@ func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) saram
 	config.Net.TLS.Config = tc
 	config.Net.TLS.Enable = true
 	config.Producer.Return.Errors = true
+	config.Producer.RequiredAcks = sarama.WaitForAll // Default is WaitForLocal
 	config.ClientID = ac.Kafka.ConsumerGroup
 
 	err := config.Validate()
