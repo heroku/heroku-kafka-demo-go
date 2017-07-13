@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -37,6 +38,7 @@ type AppConfig struct {
 type KafkaClient struct {
 	producer sarama.AsyncProducer
 	consumer *cluster.Consumer
+	config   *AppConfig
 
 	ml               sync.RWMutex
 	receivedMessages []Message
@@ -74,6 +76,7 @@ func main() {
 	router.Static("/public", "public")
 
 	router.GET("/", indexGET)
+	router.GET("/cert-check", client.certCheckGET)
 	router.GET("/messages", client.messagesGET)
 	router.POST("/messages", client.messagesPOST)
 
@@ -83,6 +86,16 @@ func main() {
 func indexGET(c *gin.Context) {
 	h := gin.H{"baseurl": "https://" + c.Request.Host}
 	c.HTML(http.StatusOK, "index.tmpl.html", h)
+}
+
+// this memory re-verifies broker certs
+func (kc *KafkaClient) certCheckGET(c *gin.Context) {
+	err := verifyBrokers(kc.config.brokerAddresses(), kc.config.createTLSConfig(), kc.config.Kafka.TrustedCert)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, []string {fmt.Sprintf("error verifying broker certs: %s", err) })
+	} else {
+		c.JSON(http.StatusOK, "no errors verifying broker certs")
+	}
 }
 
 // This endpoint accesses in memory state gathered
@@ -145,23 +158,31 @@ func newKafkaClient(config *AppConfig) *KafkaClient {
 	tlsConfig := config.createTLSConfig()
 	brokerAddrs := config.brokerAddresses()
 
-	// verify broker certs
-	for _, b := range brokerAddrs {
-		ok, err := verifyServerCert(tlsConfig, config.Kafka.TrustedCert, b)
-		if err != nil {
-			log.Fatal("Get Server Cert Error: ", err)
-		}
-
-		if !ok {
-			log.Fatalf("Broker %s has invalid certificate!", b)
-		}
+	err := verifyBrokers(brokerAddrs, tlsConfig, config.Kafka.TrustedCert)
+	if err != nil {
+		log.Fatal(err)
 	}
-	log.Println("All broker server certificates are valid!")
 
 	return &KafkaClient{
+		config:   config,
 		consumer: config.createKafkaConsumer(brokerAddrs, tlsConfig),
 		producer: config.createKafkaProducer(brokerAddrs, tlsConfig),
 	}
+}
+
+func verifyBrokers(brokerAddrs []string, tlsConfig *tls.Config, caCert string) error {
+	// verify broker certs
+	for _, b := range brokerAddrs {
+		ok, err := verifyServerCert(tlsConfig, caCert, b)
+		if err != nil {
+			return fmt.Errorf("Get Server Cert Error: %s", err)
+		}
+
+		if !ok {
+			return fmt.Errorf("Broker %s has invalid certificate", b)
+		}
+	}
+	return nil
 }
 
 func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
