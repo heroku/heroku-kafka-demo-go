@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -88,14 +89,140 @@ func indexGET(c *gin.Context) {
 	c.HTML(http.StatusOK, "index.tmpl.html", h)
 }
 
+type certCheckResult struct {
+	Ok bool `json:"ok?"`
+	Broker string `json:"broker"`
+	TrustedCertType string `json:"trusted_cert_type"`
+	ClientCertType string `json:"client_cert_type"`
+	Err string `json:"err"`
+	Topic string `topic:"err"`
+}
+
 // this memory re-verifies broker certs
 func (kc *KafkaClient) certCheckGET(c *gin.Context) {
-	err := verifyBrokers(kc.config.brokerAddresses(), kc.config.createTLSConfig(), kc.config.Kafka.TrustedCert)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, []string {fmt.Sprintf("error verifying broker certs: %s", err) })
-	} else {
-		c.JSON(http.StatusOK, "no errors verifying broker certs")
+	checks := []certCheckResult{}
+	for trustedCertType, trustedCertPrefix := range map[string]string { "trusted_cert_both": "", "trusted_cert_legacy": "_LEGACY", "trusted_cert_modern": "_MODERN" } {
+		for clientCertType, clientCertPrefix := range map[string]string { "client_cert_both": "", "client_cert_legacy": "_LEGACY", "client_cert_modern": "_MODERN" } {
+			trustedCertConfigVar := "KAFKA" + trustedCertPrefix + "_TRUSTED_CERT"
+			trustedCert := os.Getenv(trustedCertConfigVar)
+			if trustedCert == "" {
+				checks = append(checks, certCheckResult{
+					Ok: false,
+					TrustedCertType: trustedCertType,
+					ClientCertType: clientCertType,
+					Err: fmt.Sprintf("could not find a trusted cert in %s", trustedCertConfigVar),
+				})
+				continue
+			}
+
+			clientCertConfigVar := "KAFKA" + clientCertPrefix + "_CLIENT_CERT"
+			clientCert := os.Getenv(clientCertConfigVar)
+			if trustedCert == "" {
+				checks = append(checks, certCheckResult{
+					Ok: false,
+					TrustedCertType: trustedCertType,
+					ClientCertType: clientCertType,
+					Err: fmt.Sprintf("could not find a client cert in %s", clientCertConfigVar),
+				})
+			}
+
+			clientCertKeyConfigVar := "KAFKA" + clientCertPrefix + "_CLIENT_CERT_KEY"
+			clientCertKey := os.Getenv(clientCertKeyConfigVar)
+			if trustedCert == "" {
+				checks = append(checks, certCheckResult{
+					Ok: false,
+					TrustedCertType: trustedCertType,
+					ClientCertType: clientCertType,
+					Err: fmt.Sprintf("could not find a client cert key in %s", clientCertKeyConfigVar),
+				})
+			}
+
+			brokerAddrs := kc.config.brokerAddresses()
+
+			tlsConfig, err := createTLSConfig(
+				[]byte(trustedCert),
+				[]byte(clientCert),
+				[]byte(clientCertKey),
+			)
+			if err != nil {
+				checks = append(checks, certCheckResult{
+					Ok: false,
+					TrustedCertType: trustedCertType,
+					ClientCertType: clientCertType,
+					Err: fmt.Sprintf("tls config load error %s", err.Error()),
+				})
+				continue
+			}
+
+			for _, b := range brokerAddrs {
+				verifyErrs := verifyBrokers([]string { b }, tlsConfig, trustedCert)
+				if len(verifyErrs) != 0 {
+					for _, err := range verifyErrs {
+						checks = append(checks, certCheckResult{
+							Ok: false,
+							Broker: b,
+							TrustedCertType: trustedCertType,
+							ClientCertType: clientCertType,
+							Err: fmt.Sprintf("verify cert error %s", err.Error()),
+						})
+					}
+					continue
+				}
+				broker, err := dial(b, tlsConfig)
+				if err != nil {
+					checks = append(checks, certCheckResult{
+						Ok: false,
+						Broker: b,
+						TrustedCertType: trustedCertType,
+						ClientCertType: clientCertType,
+						Err: fmt.Sprintf("connect to broker error %s", err.Error()),
+					})
+					continue
+				}
+				req := &sarama.MetadataRequest{Topics: nil}
+				response, err := broker.GetMetadata(req)
+				if err != nil {
+					checks = append(checks, certCheckResult{
+						Ok: false,
+						Broker: b,
+						TrustedCertType: trustedCertType,
+						ClientCertType: clientCertType,
+						Err: fmt.Sprintf("load metadata error %s", err.Error()),
+					})
+					continue
+				}
+				for _, topic := range response.Topics {
+					checks = append(checks, certCheckResult{
+						Ok: true,
+						Broker: b,
+						TrustedCertType: trustedCertType,
+						ClientCertType: clientCertType,
+						Err: "",
+						Topic: topic.Name,
+					})
+				}
+			}
+		}
 	}
+	c.JSON(http.StatusOK, checks)
+}
+
+func dial(addr string, conf *tls.Config) (*sarama.Broker, error) {
+	broker := sarama.NewBroker(addr)
+	config := sarama.NewConfig()
+
+	config.Net.TLS.Config = conf
+	config.Net.TLS.Enable = true
+
+	if err := broker.Open(config); err != nil {
+		return nil, err
+	}
+
+	if _, err := broker.Connected(); err != nil {
+		return nil, err
+	}
+
+	return broker, nil
 }
 
 // This endpoint accesses in memory state gathered
@@ -155,12 +282,16 @@ func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
 // Setup the Kafka client for producing and consumer messages.
 // Use the specified configuration environment variables.
 func newKafkaClient(config *AppConfig) *KafkaClient {
-	tlsConfig := config.createTLSConfig()
+	tlsConfig, err := config.createTLSConfig()
+	if err != nil {
+		log.Fatal(fmt.Sprintf("failed to make tls config during startup %v", err))
+	}
+
 	brokerAddrs := config.brokerAddresses()
 
-	err := verifyBrokers(brokerAddrs, tlsConfig, config.Kafka.TrustedCert)
-	if err != nil {
-		log.Fatal(err)
+	errs := verifyBrokers(brokerAddrs, tlsConfig, config.Kafka.TrustedCert)
+	if len(errs) != 0 {
+		log.Fatal(fmt.Sprintf("%v", errs))
 	}
 
 	return &KafkaClient{
@@ -170,19 +301,20 @@ func newKafkaClient(config *AppConfig) *KafkaClient {
 	}
 }
 
-func verifyBrokers(brokerAddrs []string, tlsConfig *tls.Config, caCert string) error {
+func verifyBrokers(brokerAddrs []string, tlsConfig *tls.Config, caCert string) []error {
+	errs := []error{}
 	// verify broker certs
 	for _, b := range brokerAddrs {
 		ok, err := verifyServerCert(tlsConfig, caCert, b)
 		if err != nil {
-			return fmt.Errorf("Get Server Cert Error: %s", err)
+			errs = append(errs, fmt.Errorf("Get Server Cert Error: %s for broker %s", err, b))
 		}
 
 		if !ok {
-			return fmt.Errorf("Broker %s has invalid certificate", b)
+			errs = append(errs, fmt.Errorf("Get Server Cert Error: %s for broker %s", err, b))
 		}
 	}
-	return nil
+	return errs
 }
 
 func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
@@ -212,17 +344,25 @@ func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
 }
 
 // Create the TLS context, using the key and certificates provided.
-func (ac *AppConfig) createTLSConfig() *tls.Config {
+func (ac *AppConfig) createTLSConfig() (*tls.Config, error) {
+	return createTLSConfig(
+		[]byte(ac.Kafka.TrustedCert),
+		[]byte(ac.Kafka.ClientCert),
+		[]byte(ac.Kafka.ClientCertKey),
+	)
+}
+
+func createTLSConfig(caCert []byte, clientCert []byte, clientCertKey []byte) (*tls.Config, error) {
 	roots := x509.NewCertPool()
-	ok := roots.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
+	ok := roots.AppendCertsFromPEM([]byte(caCert))
 	if !ok {
-		log.Println("Unable to parse Root Cert:", ac.Kafka.TrustedCert)
+		return nil, fmt.Errorf("Unable to parse Root Cert: %s", caCert)
 	}
 
 	// Setup certs for Sarama
-	cert, err := tls.X509KeyPair([]byte(ac.Kafka.ClientCert), []byte(ac.Kafka.ClientCertKey))
+	cert, err := tls.X509KeyPair([]byte(clientCert), []byte(clientCertKey))
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("Unable to parse client cert: %s", err)
 	}
 
 	tlsConfig := &tls.Config{
@@ -232,8 +372,9 @@ func (ac *AppConfig) createTLSConfig() *tls.Config {
 	}
 
 	tlsConfig.BuildNameToCertificate()
-	return tlsConfig
+	return tlsConfig, nil
 }
+
 
 // Connect a consumer. Consumers in Kafka have a "group" id, which
 // denotes how consumers balance work. Each group coordinates
