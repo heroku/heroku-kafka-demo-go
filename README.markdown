@@ -17,16 +17,15 @@ Create a heroku app with Kafka attached:
 
 ```
 $ heroku apps:create your-cool-app-name
-$ heroku git:remote -a your-cool-app-name
 $ heroku addons:create heroku-kafka:basic-0
 ```
 
-Create the sample topic and consumer group. By default, the topic will have 8 partitions:
+Create the sample topic. By default, the topic will have 8 partitions:
 
 ```
 $ heroku kafka:topics:create messages
-$ heroku kafka:consumer-groups:create heroku-kafka-demo
 ```
+
 Deploy to Heroku and open the app:
 
 ```
