@@ -16,12 +16,11 @@ $ heroku plugins:install heroku-kafka
 Create a heroku app with Kafka attached:
 
 ```
-$ heroku create
-$ heroku addons:create heroku-kafka:standard-0
-$ heroku kafka:wait
+$ heroku apps:create your-cool-app-name
+$ heroku addons:create heroku-kafka:basic-0
 ```
 
-Create the sample topic, by default the topic will have 32 partitions:
+Create the sample topic. By default, the topic will have 8 partitions:
 
 ```
 $ heroku kafka:topics:create messages
