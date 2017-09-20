@@ -1,30 +1,21 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Shopify/sarama"
 	cluster "github.com/bsm/sarama-cluster"
+	heroku "github.com/deadmanssnitch/sarama-heroku"
 	"github.com/gin-gonic/gin"
 	"github.com/joeshaw/envdecode"
 )
 
 type AppConfig struct {
 	Kafka struct {
-		URL           string `env:"KAFKA_URL,required"`
-		TrustedCert   string `env:"KAFKA_TRUSTED_CERT,required"`
-		ClientCertKey string `env:"KAFKA_CLIENT_CERT_KEY,required"`
-		ClientCert    string `env:"KAFKA_CLIENT_CERT,required"`
-		Prefix        string `env:"KAFKA_PREFIX"`
 		Topic         string `env:"KAFKA_TOPIC,default=messages"`
 		ConsumerGroup string `env:"KAFKA_CONSUMER_GROUP,default=heroku-kafka-demo-go"`
 	}
@@ -126,6 +117,7 @@ func (kc *KafkaClient) consumeMessages() {
 func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
 	kc.ml.Lock()
 	defer kc.ml.Unlock()
+
 	if len(kc.receivedMessages) >= 10 {
 		kc.receivedMessages = kc.receivedMessages[1:]
 	}
@@ -142,76 +134,10 @@ func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
 // Setup the Kafka client for producing and consumer messages.
 // Use the specified configuration environment variables.
 func newKafkaClient(config *AppConfig) *KafkaClient {
-	tlsConfig := config.createTLSConfig()
-	brokerAddrs := config.brokerAddresses()
-
-	// verify broker certs
-	for _, b := range brokerAddrs {
-		ok, err := verifyServerCert(tlsConfig, config.Kafka.TrustedCert, b)
-		if err != nil {
-			log.Fatal("Get Server Cert Error: ", err)
-		}
-
-		if !ok {
-			log.Fatalf("Broker %s has invalid certificate!", b)
-		}
-	}
-	log.Println("All broker server certificates are valid!")
-
 	return &KafkaClient{
-		consumer: config.createKafkaConsumer(brokerAddrs, tlsConfig),
-		producer: config.createKafkaProducer(brokerAddrs, tlsConfig),
+		consumer: config.createKafkaConsumer(),
+		producer: config.createKafkaProducer(),
 	}
-}
-
-func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
-	// Create connection to server
-	conn, err := tls.Dial("tcp", url, tc)
-	if err != nil {
-		return false, err
-	}
-
-	// Pull servers cert
-	serverCert := conn.ConnectionState().PeerCertificates[0]
-
-	roots := x509.NewCertPool()
-	ok := roots.AppendCertsFromPEM([]byte(caCert))
-	if !ok {
-		return false, errors.New("Unable to parse Trusted Cert")
-	}
-
-	// Verify Server Cert
-	opts := x509.VerifyOptions{Roots: roots}
-	if _, err := serverCert.Verify(opts); err != nil {
-		log.Println("Unable to verify Server Cert")
-		return false, err
-	}
-
-	return true, nil
-}
-
-// Create the TLS context, using the key and certificates provided.
-func (ac *AppConfig) createTLSConfig() *tls.Config {
-	roots := x509.NewCertPool()
-	ok := roots.AppendCertsFromPEM([]byte(ac.Kafka.TrustedCert))
-	if !ok {
-		log.Println("Unable to parse Root Cert:", ac.Kafka.TrustedCert)
-	}
-
-	// Setup certs for Sarama
-	cert, err := tls.X509KeyPair([]byte(ac.Kafka.ClientCert), []byte(ac.Kafka.ClientCertKey))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-		RootCAs:            roots,
-	}
-
-	tlsConfig.BuildNameToCertificate()
-	return tlsConfig
 }
 
 // Connect a consumer. Consumers in Kafka have a "group" id, which
@@ -220,46 +146,35 @@ func (ac *AppConfig) createTLSConfig() *tls.Config {
 // For the demo app, there's only one group, but a production app
 // could use separate groups for e.g. processing events and archiving
 // raw events to S3 for longer term storage
-func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) *cluster.Consumer {
+func (ac *AppConfig) createKafkaConsumer() *cluster.Consumer {
 	config := cluster.NewConfig()
-
-	config.Net.TLS.Config = tc
-	config.Net.TLS.Enable = true
 	config.Group.PartitionStrategy = cluster.StrategyRoundRobin
 	config.ClientID = ac.Kafka.ConsumerGroup
 	config.Consumer.Return.Errors = true
 
 	topic := ac.topic()
-
+	brokers, err := heroku.Brokers()
+	if err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
 
-	err := config.Validate()
+	consumer, err := heroku.NewClusterConsumer(ac.group(), []string{topic}, config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	consumer, err := cluster.NewConsumer(brokers, ac.group(), []string{topic}, config)
-	if err != nil {
-		log.Fatal(err)
-	}
 	return consumer
 }
 
 // Create the Kafka asynchronous producer
-func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) sarama.AsyncProducer {
+func (ac *AppConfig) createKafkaProducer() sarama.AsyncProducer {
 	config := sarama.NewConfig()
-
-	config.Net.TLS.Config = tc
-	config.Net.TLS.Enable = true
 	config.Producer.Return.Errors = true
 	config.Producer.RequiredAcks = sarama.WaitForAll // Default is WaitForLocal
 	config.ClientID = ac.Kafka.ConsumerGroup
 
-	err := config.Validate()
-	if err != nil {
-		log.Fatal(err)
-	}
-	producer, err := sarama.NewAsyncProducer(brokers, config)
+	producer, err := heroku.NewAsyncProducer(config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -267,38 +182,12 @@ func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) saram
 	return producer
 }
 
-// Extract the host:port pairs from the Kafka URL(s)
-func (ac *AppConfig) brokerAddresses() []string {
-	urls := strings.Split(ac.Kafka.URL, ",")
-	addrs := make([]string, len(urls))
-	for i, v := range urls {
-		u, err := url.Parse(v)
-		if err != nil {
-			log.Fatal(err)
-		}
-		addrs[i] = u.Host
-	}
-	return addrs
-}
-
 // Prepends prefix to topic if provided
 func (ac *AppConfig) topic() string {
-	topic := ac.Kafka.Topic
-
-	if ac.Kafka.Prefix != "" {
-		topic = strings.Join([]string{ac.Kafka.Prefix, topic}, "")
-	}
-
-	return topic
+	return heroku.AppendPrefixTo(ac.Kafka.Topic)
 }
 
 // Prepend prefix to consumer group if provided
 func (ac *AppConfig) group() string {
-	group := ac.Kafka.ConsumerGroup
-
-	if ac.Kafka.Prefix != "" {
-		group = strings.Join([]string{ac.Kafka.Prefix, group}, "")
-	}
-
-	return group
+	return heroku.AppendPrefixTo(ac.Kafka.ConsumerGroup)
 }

@@ -1,10 +1,12 @@
 {
 	"comment": "",
+	"heroku": {
+		"goVersion": "go1.8",
+		"install": [
+			"."
+		]
+	},
 	"ignore": "test",
-    "heroku": {
-        "goVersion": "go1.8",
-        "install": ["."]
-    },
 	"package": [
 		{
 			"checksumSHA1": "gwnUhIsatKCPs5W7Rx5LfpF2RZA=",
@@ -27,6 +29,12 @@
 			"checksumSHA1": "a2yC46a1qsJomgY6rb+FkTFiqmE=",
 			"path": "github.com/davecgh/go-spew/spew/testdata",
 			"revision": "1aaf839fb07e099361e445273993ccd9adc21b07"
+		},
+		{
+			"checksumSHA1": "YXaLK72BNtC1l/maPafUj2faoTQ=",
+			"path": "github.com/deadmanssnitch/sarama-heroku",
+			"revision": "9838a84ef252440b7b904941846eff9785da4ca8",
+			"revisionTime": "2017-09-20T13:49:12Z"
 		},
 		{
 			"checksumSHA1": "y2Kh4iPlgCPXSGTCcFpzePYdzzg=",
