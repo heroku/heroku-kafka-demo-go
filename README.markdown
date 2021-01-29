@@ -28,6 +28,8 @@ $ heroku kafka:topics:create messages
 
 Create the consumer group:
 
+**Note:** This assumes that you are using a `basic-0` as specified above. This step is not necessary for standard, private, or shield kafka plans.
+
 ```
 $ heroku kafka:consumer-groups:create heroku-kafka-demo-go
 ```
