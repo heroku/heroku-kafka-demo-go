@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -98,7 +98,7 @@ func (kc *KafkaClient) messagesGET(c *gin.Context) {
 // It receives messages as http bodies on /messages,
 // and posts them directly to a Kafka topic.
 func (kc *KafkaClient) messagesPOST(c *gin.Context) {
-	message, err := ioutil.ReadAll(c.Request.Body)
+	message, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
