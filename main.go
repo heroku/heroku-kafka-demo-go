@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Shopify/sarama"
-	cluster "github.com/bsm/sarama-cluster"
+	"github.com/IBM/sarama"
+	// cluster "github.com/bsm/sarama-cluster"
 	"github.com/gin-gonic/gin"
 	"github.com/joeshaw/envdecode"
 )
@@ -36,7 +36,7 @@ type AppConfig struct {
 
 type KafkaClient struct {
 	producer sarama.AsyncProducer
-	consumer *cluster.Consumer
+	// consumer *cluster.Consumer
 
 	ml               sync.RWMutex
 	receivedMessages []Message
@@ -220,30 +220,30 @@ func (ac *AppConfig) createTLSConfig() *tls.Config {
 // For the demo app, there's only one group, but a production app
 // could use separate groups for e.g. processing events and archiving
 // raw events to S3 for longer term storage
-func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) *cluster.Consumer {
-	config := cluster.NewConfig()
+// func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) *cluster.Consumer {
+// 	config := cluster.NewConfig()
 
-	config.Net.TLS.Config = tc
-	config.Net.TLS.Enable = true
-	config.Group.PartitionStrategy = cluster.StrategyRoundRobin
-	config.ClientID = ac.Kafka.ConsumerGroup
-	config.Consumer.Return.Errors = true
+// 	config.Net.TLS.Config = tc
+// 	config.Net.TLS.Enable = true
+// 	config.Group.PartitionStrategy = cluster.StrategyRoundRobin
+// 	config.ClientID = ac.Kafka.ConsumerGroup
+// 	config.Consumer.Return.Errors = true
 
-	topic := ac.topic()
+// 	topic := ac.topic()
 
-	log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
+// 	log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
 
-	err := config.Validate()
-	if err != nil {
-		log.Fatal(err)
-	}
+// 	err := config.Validate()
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
 
-	consumer, err := cluster.NewConsumer(brokers, ac.group(), []string{topic}, config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return consumer
-}
+// 	consumer, err := cluster.NewConsumer(brokers, ac.group(), []string{topic}, config)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+// 	return consumer
+// }
 
 // Create the Kafka asynchronous producer
 func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) sarama.AsyncProducer {
