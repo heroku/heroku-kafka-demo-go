@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -36,7 +37,7 @@ type AppConfig struct {
 
 type KafkaClient struct {
 	producer sarama.AsyncProducer
-	// consumer *cluster.Consumer
+	consumer sarama.ConsumerGroup
 
 	ml               sync.RWMutex
 	receivedMessages []Message
@@ -53,18 +54,78 @@ type MessageMetadata struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
+type Consumer struct {
+	ready chan bool
+
+	ml               sync.RWMutex
+	receivedMessages []Message
+}
+
+// Save consumed message in the buffer consumed by the /message API
+func (consumer *Consumer) saveMessage(msg *sarama.ConsumerMessage) {
+	consumer.ml.Lock()
+	defer consumer.ml.Unlock()
+	if len(consumer.receivedMessages) >= 10 {
+		consumer.receivedMessages = consumer.receivedMessages[1:]
+	}
+	consumer.receivedMessages = append(consumer.receivedMessages, Message{
+		Partition: msg.Partition,
+		Offset:    msg.Offset,
+		Value:     string(msg.Value),
+		Metadata: MessageMetadata{
+			ReceivedAt: time.Now(),
+		},
+	})
+}
+
+// This endpoint accesses in memory state gathered
+// by the consumer, which holds the last 10 messages received
+func (consumer *Consumer) messagesGET(c *gin.Context) {
+	consumer.ml.RLock()
+	defer consumer.ml.RUnlock()
+	c.JSON(http.StatusOK, consumer.receivedMessages)
+}
+
+func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
+	close(consumer.ready)
+	return nil
+}
+
+func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for {
+		select {
+		case message, ok := <-claim.Messages():
+			if !ok {
+				log.Printf("message channel was closed")
+				return nil
+			}
+			log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
+			consumer.saveMessage(message)
+			session.MarkMessage(message, "")
+		case <-session.Context().Done():
+			return nil
+		}
+	}
+}
+
 var topic string
 
 func main() {
+	ctx := context.Background()
 	appconfig := AppConfig{}
 	envdecode.MustDecode(&appconfig)
 
 	client := newKafkaClient(&appconfig)
 	client.receivedMessages = make([]Message, 0)
+	consumer := Consumer{}
 
 	topic = appconfig.topic()
 
-	go client.consumeMessages()
+	go client.consumeMessages(ctx, []string{topic}, &consumer)
 	defer client.producer.Close()
 	defer client.consumer.Close()
 
@@ -74,7 +135,7 @@ func main() {
 	router.Static("/public", "public")
 
 	router.GET("/", indexGET)
-	router.GET("/messages", client.messagesGET)
+	router.GET("/messages", consumer.messagesGET)
 	router.POST("/messages", client.messagesPOST)
 
 	router.Run(":" + appconfig.Web.Port)
@@ -83,15 +144,6 @@ func main() {
 func indexGET(c *gin.Context) {
 	h := gin.H{"baseurl": "https://" + c.Request.Host}
 	c.HTML(http.StatusOK, "index.tmpl.html", h)
-}
-
-// This endpoint accesses in memory state gathered
-// by the consumer, which holds the last 10 messages received
-func (kc *KafkaClient) messagesGET(c *gin.Context) {
-	kc.ml.RLock()
-	defer kc.ml.RUnlock()
-	c.JSON(http.StatusOK, kc.receivedMessages)
-
 }
 
 // A sample producer endpoint.
@@ -113,30 +165,13 @@ func (kc *KafkaClient) messagesPOST(c *gin.Context) {
 
 // Consume messages from the topic and buffer the last 10 messages
 // in memory so that the web app can send them back over the API.
-func (kc *KafkaClient) consumeMessages() {
+func (kc *KafkaClient) consumeMessages(ctx context.Context, topics []string, handler sarama.ConsumerGroupHandler) {
 	for {
-		select {
-		case message := <-kc.consumer.Messages():
-			kc.saveMessage(message)
+		err := kc.consumer.Consume(ctx, topics, handler)
+		if err != nil {
+			log.Print(err)
 		}
 	}
-}
-
-// Save consumed message in the buffer consumed by the /message API
-func (kc *KafkaClient) saveMessage(msg *sarama.ConsumerMessage) {
-	kc.ml.Lock()
-	defer kc.ml.Unlock()
-	if len(kc.receivedMessages) >= 10 {
-		kc.receivedMessages = kc.receivedMessages[1:]
-	}
-	kc.receivedMessages = append(kc.receivedMessages, Message{
-		Partition: msg.Partition,
-		Offset:    msg.Offset,
-		Value:     string(msg.Value),
-		Metadata: MessageMetadata{
-			ReceivedAt: time.Now(),
-		},
-	})
 }
 
 // Setup the Kafka client for producing and consumer messages.
@@ -177,7 +212,7 @@ func verifyServerCert(tc *tls.Config, caCert string, url string) (bool, error) {
 	roots := x509.NewCertPool()
 	ok := roots.AppendCertsFromPEM([]byte(caCert))
 	if !ok {
-		return false, errors.New("Unable to parse Trusted Cert")
+		return false, errors.New("unable to parse trusted cert")
 	}
 
 	// Verify Server Cert
@@ -220,30 +255,31 @@ func (ac *AppConfig) createTLSConfig() *tls.Config {
 // For the demo app, there's only one group, but a production app
 // could use separate groups for e.g. processing events and archiving
 // raw events to S3 for longer term storage
-// func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) *cluster.Consumer {
-// 	config := cluster.NewConfig()
+func (ac *AppConfig) createKafkaConsumer(brokers []string, tc *tls.Config) sarama.ConsumerGroup {
+	config := sarama.NewConfig()
 
-// 	config.Net.TLS.Config = tc
-// 	config.Net.TLS.Enable = true
-// 	config.Group.PartitionStrategy = cluster.StrategyRoundRobin
-// 	config.ClientID = ac.Kafka.ConsumerGroup
-// 	config.Consumer.Return.Errors = true
+	config.Net.TLS.Config = tc
+	config.Net.TLS.Enable = true
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
+	config.ClientID = ac.Kafka.ConsumerGroup
+	config.Consumer.Return.Errors = true
+	config.Consumer.Offsets.AutoCommit.Enable = true
+	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
 
-// 	topic := ac.topic()
+	// log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
 
-// 	log.Printf("Consuming topic %s on brokers: %s", topic, brokers)
+	err := config.Validate()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-// 	err := config.Validate()
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
+	consumer, err := sarama.NewConsumerGroup(brokers, ac.group(), config)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-// 	consumer, err := cluster.NewConsumer(brokers, ac.group(), []string{topic}, config)
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-// 	return consumer
-// }
+	return consumer
+}
 
 // Create the Kafka asynchronous producer
 func (ac *AppConfig) createKafkaProducer(brokers []string, tc *tls.Config) sarama.AsyncProducer {
