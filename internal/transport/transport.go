@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -16,12 +16,7 @@ import (
 	"github.com/heroku/heroku-kafka-demo-go/internal/config"
 )
 
-const (
-	// The number of messages to keep in the buffer
-	// before dropping the oldest message.
-	MaxBufferSize = 10
-)
-
+// Message represents a Kafka message
 type Message struct {
 	Metadata  MessageMetadata `json:"metadata"`
 	Value     string          `json:"value"`
@@ -29,16 +24,22 @@ type Message struct {
 	Offset    int64           `json:"offset"`
 }
 
+// MessageMetadata represents metadata about a Kafka message
 type MessageMetadata struct {
-	ReceivedAt time.Time `json:"received_at"`
+	ReceivedAt time.Time `json:"receivedAt"`
 }
 
+// MessageBuffer is a buffer of Kafka messages
+// Concurrent access to the buffer is protected via a RWMutex
 type MessageBuffer struct {
 	receivedMessages []Message
+	MaxSize          int
 
 	ml sync.RWMutex
 }
 
+// GetMessages returns the messages in the buffer
+// returning it in JSON format
 func (mb *MessageBuffer) GetMessages(c *gin.Context) {
 	mb.ml.RLock()
 	defer mb.ml.RUnlock()
@@ -46,30 +47,39 @@ func (mb *MessageBuffer) GetMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, mb.receivedMessages)
 }
 
+// SaveMessage saves a message to the buffer
+func (mb *MessageBuffer) SaveMessage(msg Message) {
+	mb.ml.Lock()
+	defer mb.ml.Unlock()
+
+	if len(mb.receivedMessages) >= mb.MaxSize {
+		mb.receivedMessages = mb.receivedMessages[1:]
+	}
+
+	mb.receivedMessages = append(mb.receivedMessages, msg)
+}
+
+// MessageHandler is a Sarama consumer group handler
 type MessageHandler struct {
-	ready  chan bool
+	Ready  chan bool
 	buffer *MessageBuffer
 }
 
+// Setup is run at the beginning of a new session, before ConsumeClaim
 func (c *MessageHandler) Setup(sarama.ConsumerGroupSession) error {
-	close(c.ready)
+	close(c.Ready)
 
 	return nil
 }
 
+// Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (c *MessageHandler) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
+// saveMessage saves a consumer message to the buffer
 func (c *MessageHandler) saveMessage(msg *sarama.ConsumerMessage) {
-	c.buffer.ml.Lock()
-	defer c.buffer.ml.Unlock()
-
-	if len(c.buffer.receivedMessages) >= MaxBufferSize {
-		c.buffer.receivedMessages = c.buffer.receivedMessages[1:]
-	}
-
-	c.buffer.receivedMessages = append(c.buffer.receivedMessages, Message{
+	c.buffer.SaveMessage(Message{
 		Partition: msg.Partition,
 		Offset:    msg.Offset,
 		Value:     string(msg.Value),
@@ -79,34 +89,40 @@ func (c *MessageHandler) saveMessage(msg *sarama.ConsumerMessage) {
 	})
 }
 
+// ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (c *MessageHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for {
 		select {
-		case <-session.Context().Done():
-			return nil
 		case msg, ok := <-claim.Messages():
 			if !ok {
-				log.Printf("message channel was closed")
+				slog.Error("message channel was closed")
 				return nil
 			}
 
 			c.saveMessage(msg)
 			session.MarkMessage(msg, "")
+		case <-session.Context().Done():
+			return nil
 		}
 	}
 }
 
+// NewMessageHandler creates a new MessageHandler
 func NewMessageHandler(buffer *MessageBuffer) *MessageHandler {
 	return &MessageHandler{
-		ready:  make(chan bool),
+		Ready:  make(chan bool),
 		buffer: buffer,
 	}
 }
 
-func CreateKafkaProducer(ac *config.AppConfig) (sarama.AsyncProducer, error) {
+// CreateKafkaProducer creates a new Sarama SyncProducer
+func CreateKafkaProducer(ac *config.AppConfig) (sarama.SyncProducer, error) {
 	kafkaConfig := sarama.NewConfig()
 	kafkaConfig.Producer.RequiredAcks = sarama.WaitForAll
+	kafkaConfig.Producer.Retry.Max = 10
 	kafkaConfig.Producer.Return.Successes = true
+	kafkaConfig.Producer.Compression = sarama.CompressionZSTD
+	kafkaConfig.ClientID = "heroku-kafka-demo-go/producer"
 
 	tlsConfig := ac.CreateTLSConfig()
 	kafkaConfig.Net.TLS.Enable = true
@@ -117,7 +133,7 @@ func CreateKafkaProducer(ac *config.AppConfig) (sarama.AsyncProducer, error) {
 		return nil, err
 	}
 
-	producer, err := sarama.NewAsyncProducer(ac.BrokerAddresses(), kafkaConfig)
+	producer, err := sarama.NewSyncProducer(ac.BrokerAddresses(), kafkaConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +141,15 @@ func CreateKafkaProducer(ac *config.AppConfig) (sarama.AsyncProducer, error) {
 	return producer, nil
 }
 
+// CreateKafkaConsumer creates a new Sarama ConsumerGroup
 func CreateKafkaConsumer(ac *config.AppConfig) (sarama.ConsumerGroup, error) {
 	kafkaConfig := sarama.NewConfig()
-	kafkaConfig.Consumer.Return.Errors = true
-
 	tlsConfig := ac.CreateTLSConfig()
 	kafkaConfig.Net.TLS.Enable = true
 	kafkaConfig.Net.TLS.Config = tlsConfig
 
 	kafkaConfig.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
-	kafkaConfig.ClientID = ac.GroupID()
+	kafkaConfig.ClientID = "heroku-kafka-demo-go/consumer"
 	kafkaConfig.Consumer.Offsets.AutoCommit.Enable = true
 	kafkaConfig.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
 
@@ -143,7 +158,7 @@ func CreateKafkaConsumer(ac *config.AppConfig) (sarama.ConsumerGroup, error) {
 		return nil, err
 	}
 
-	consumer, err := sarama.NewConsumerGroup(ac.BrokerAddresses(), ac.GroupID(), kafkaConfig)
+	consumer, err := sarama.NewConsumerGroup(ac.BrokerAddresses(), ac.Group(), kafkaConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -151,11 +166,13 @@ func CreateKafkaConsumer(ac *config.AppConfig) (sarama.ConsumerGroup, error) {
 	return consumer, nil
 }
 
+// KafkaClient is a wrapper around a Sarama SyncProducer and ConsumerGroup
 type KafkaClient struct {
-	Producer sarama.AsyncProducer
+	Producer sarama.SyncProducer
 	Consumer sarama.ConsumerGroup
 }
 
+// NewKafkaClient creates a new KafkaClient
 func NewKafkaClient(ac *config.AppConfig) (*KafkaClient, error) {
 	tlsConfig := ac.CreateTLSConfig()
 
@@ -184,28 +201,39 @@ func NewKafkaClient(ac *config.AppConfig) (*KafkaClient, error) {
 	}, nil
 }
 
+// Close closes the KafkaClient
 func (kc *KafkaClient) Close() {
-	kc.Producer.AsyncClose()
+	kc.Producer.Close()
 	kc.Consumer.Close()
 }
 
-func (kc *KafkaClient) SendMessage(topic, key string, message []byte) {
-	kc.Producer.Input() <- &sarama.ProducerMessage{
+// SendMessage sends a message to Kafka
+func (kc *KafkaClient) SendMessage(topic, key string, message []byte) error {
+	_, _, err := kc.Producer.SendMessage(&sarama.ProducerMessage{
 		Topic: topic,
 		Key:   sarama.ByteEncoder(key),
 		Value: sarama.ByteEncoder(message),
-	}
+	})
+
+	return err
 }
 
+// PostMessage is a handler for POST /messages/:topic
 func (kc *KafkaClient) PostMessage(c *gin.Context) {
 	message, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	kc.SendMessage(c.Param("topic"), c.Request.RemoteAddr, message)
+	err = kc.SendMessage(c.Param("topic"), c.Request.RemoteAddr, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 }
 
+// ConsumeMessages consumes messages from Kafka
 func (kc *KafkaClient) ConsumeMessages(ctx context.Context, topics []string, handler *MessageHandler) {
 	for {
 		if err := kc.Consumer.Consume(ctx, topics, handler); err != nil {
@@ -213,14 +241,17 @@ func (kc *KafkaClient) ConsumeMessages(ctx context.Context, topics []string, han
 				return
 			}
 
-			log.Print(err)
+			slog.Error(
+				"error consuming",
+				"err", err,
+			)
 		}
 
 		if ctx.Err() != nil {
 			return
 		}
 
-		handler.ready = make(chan bool)
+		handler.Ready = make(chan bool)
 	}
 }
 
@@ -259,7 +290,7 @@ func verifyServerCert(tc *tls.Config, caCert, url string) (bool, error) {
 	// Verify Server Cert
 	opts := x509.VerifyOptions{Roots: roots}
 	if _, err := serverCert.Verify(opts); err != nil {
-		log.Println("Unable to verify Server Cert")
+		slog.Error("Unable to verify Server Cert")
 		return false, err
 	}
 
