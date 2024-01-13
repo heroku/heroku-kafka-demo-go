@@ -24,6 +24,9 @@
       </p>
       <p>To send a message, simply curl the endpoint of this app:</p>
       <pre>curl -X POST {{ .baseurl }}/messages/{{ .topic }} -d 'message1'</pre>
+      <pre>
+curl -X POST {{ .baseurl }}/async-messages/{{ .topic }} -d 'message1'</pre
+      >
       <container
         class="d-flex flex-column justify-content-center"
         style="min-width: 80vw"

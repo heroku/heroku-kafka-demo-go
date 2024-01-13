@@ -116,6 +116,7 @@ func main() {
 	router.GET("/", ih.GetIndex)
 	router.GET("/messages", buffer.GetMessages)
 	router.POST("/messages/:topic", client.PostMessage)
+	router.POST("/async-messages/:topic", client.PostAsyncMessage)
 
 	err = router.Run(":" + appconfig.Web.Port)
 	if err != nil {

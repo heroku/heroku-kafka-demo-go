@@ -115,6 +115,34 @@ func NewMessageHandler(buffer *MessageBuffer) *MessageHandler {
 	}
 }
 
+// CreateKafkaAsyncProducer creates a new Sarama AsyncProducer
+func CreateKafkaAsyncProducer(ac *config.AppConfig) (sarama.AsyncProducer, error) {
+	const flushFrequency = 500 * time.Millisecond
+
+	kafkaConfig := sarama.NewConfig()
+	kafkaConfig.Producer.RequiredAcks = sarama.WaitForAll
+	kafkaConfig.Producer.Retry.Max = 10
+	kafkaConfig.Producer.Compression = sarama.CompressionZSTD
+	kafkaConfig.Producer.Flush.Frequency = flushFrequency
+	kafkaConfig.ClientID = "heroku-kafka-demo-go/asyncproducer"
+
+	tlsConfig := ac.CreateTLSConfig()
+	kafkaConfig.Net.TLS.Enable = true
+	kafkaConfig.Net.TLS.Config = tlsConfig
+
+	err := kafkaConfig.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	producer, err := sarama.NewAsyncProducer(ac.BrokerAddresses(), kafkaConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return producer, nil
+}
+
 // CreateKafkaProducer creates a new Sarama SyncProducer
 func CreateKafkaProducer(ac *config.AppConfig) (sarama.SyncProducer, error) {
 	kafkaConfig := sarama.NewConfig()
@@ -168,8 +196,9 @@ func CreateKafkaConsumer(ac *config.AppConfig) (sarama.ConsumerGroup, error) {
 
 // KafkaClient is a wrapper around a Sarama SyncProducer and ConsumerGroup
 type KafkaClient struct {
-	Producer sarama.SyncProducer
-	Consumer sarama.ConsumerGroup
+	Producer      sarama.SyncProducer
+	AsyncProducer sarama.AsyncProducer
+	Consumer      sarama.ConsumerGroup
 }
 
 // NewKafkaClient creates a new KafkaClient
@@ -190,14 +219,20 @@ func NewKafkaClient(ac *config.AppConfig) (*KafkaClient, error) {
 		return nil, err
 	}
 
+	asyncProducer, err := CreateKafkaAsyncProducer(ac)
+	if err != nil {
+		return nil, err
+	}
+
 	consumer, err := CreateKafkaConsumer(ac)
 	if err != nil {
 		return nil, err
 	}
 
 	return &KafkaClient{
-		Producer: producer,
-		Consumer: consumer,
+		AsyncProducer: asyncProducer,
+		Producer:      producer,
+		Consumer:      consumer,
 	}, nil
 }
 
@@ -205,6 +240,17 @@ func NewKafkaClient(ac *config.AppConfig) (*KafkaClient, error) {
 func (kc *KafkaClient) Close() {
 	kc.Producer.Close()
 	kc.Consumer.Close()
+}
+
+// SendAsyncMessage sends a message to Kafka asynchronously
+func (kc *KafkaClient) SendAsyncMessage(topic, key string, message []byte) error {
+	kc.AsyncProducer.Input() <- &sarama.ProducerMessage{
+		Topic: topic,
+		Key:   sarama.ByteEncoder(key),
+		Value: sarama.ByteEncoder(message),
+	}
+
+	return nil
 }
 
 // SendMessage sends a message to Kafka
@@ -227,6 +273,21 @@ func (kc *KafkaClient) PostMessage(c *gin.Context) {
 	}
 
 	err = kc.SendMessage(c.Param("topic"), c.Request.RemoteAddr, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+}
+
+// PostAsyncMessage is a handler for POST /async-messages/:topic
+func (kc *KafkaClient) PostAsyncMessage(c *gin.Context) {
+	message, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = kc.SendAsyncMessage(c.Param("topic"), c.Request.RemoteAddr, message)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
