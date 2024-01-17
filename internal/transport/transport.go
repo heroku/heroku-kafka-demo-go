@@ -53,6 +53,7 @@ func (mb *MessageBuffer) SaveMessage(msg Message) {
 	defer mb.ml.Unlock()
 
 	if len(mb.receivedMessages) >= mb.MaxSize {
+		// Remove the oldest message
 		mb.receivedMessages = mb.receivedMessages[1:]
 	}
 
@@ -194,7 +195,7 @@ func CreateKafkaConsumer(ac *config.AppConfig) (sarama.ConsumerGroup, error) {
 	return consumer, nil
 }
 
-// KafkaClient is a wrapper around a Sarama SyncProducer and ConsumerGroup
+// KafkaClient is a wrapper around a Sarama SyncProducer, AsyncProducer and ConsumerGroup
 type KafkaClient struct {
 	Producer      sarama.SyncProducer
 	AsyncProducer sarama.AsyncProducer
@@ -239,6 +240,7 @@ func NewKafkaClient(ac *config.AppConfig) (*KafkaClient, error) {
 // Close closes the KafkaClient
 func (kc *KafkaClient) Close() {
 	kc.Producer.Close()
+	kc.AsyncProducer.Close()
 	kc.Consumer.Close()
 }
 
