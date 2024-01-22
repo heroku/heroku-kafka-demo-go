@@ -3,6 +3,7 @@
 package envdecode
 
 import (
+	"encoding"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ import (
 // ErrInvalidTarget indicates that the target value passed to
 // Decode is invalid.  Target must be a non-nil pointer to a struct.
 var ErrInvalidTarget = errors.New("target must be non-nil pointer to struct that has at least one exported field with a valid env tag.")
+var ErrNoTargetFieldsAreSet = errors.New("none of the target fields were set from environment variables")
 
 // FailureFunc is called when an error is encountered during a MustDecode
 // operation. It prints the error and terminates the process.
@@ -29,6 +31,12 @@ var FailureFunc = func(err error) {
 	log.Fatalf("envdecode: an error was encountered while decoding: %v\n", err)
 }
 
+// Decoder is the interface implemented by an object that can decode an
+// environment variable string representation of itself.
+type Decoder interface {
+	Decode(string) error
+}
+
 // Decode environment variables into the provided target.  The target
 // must be a non-nil pointer to a struct.  Fields in the struct must
 // be exported, and tagged with an "env" struct tag with a value
@@ -38,7 +46,9 @@ var FailureFunc = func(err error) {
 // Default values may be provided by appending ",default=value" to the
 // struct tag.  Required values may be marked by appending ",required"
 // to the struct tag.  It is an error to provide both "default" and
-// "required".
+// "required". Strict values may be marked by appending ",strict" which
+// will return an error on Decode if there is an error while parsing.
+// If everything must be strict, consider using StrictDecode instead.
 //
 // All primitive types are supported, including bool, floating point,
 // signed and unsigned integers, and string.  Boolean and numeric
@@ -47,9 +57,26 @@ var FailureFunc = func(err error) {
 // recursively.  time.Duration is supported via the
 // time.ParseDuration() function and *url.URL is supported via the
 // url.Parse() function. Slices are supported for all above mentioned
-// primitive types. Comma is used as delimiter in environment variables.
+// primitive types. Semicolon is used as delimiter in environment variables.
 func Decode(target interface{}) error {
-	nFields, err := decode(target)
+	nFields, err := decode(target, false)
+	if err != nil {
+		return err
+	}
+
+	// if we didn't do anything - the user probably did something
+	// wrong like leave all fields unexported.
+	if nFields == 0 {
+		return ErrNoTargetFieldsAreSet
+	}
+
+	return nil
+}
+
+// StrictDecode is similar to Decode except all fields will have an implicit
+// ",strict" on all fields.
+func StrictDecode(target interface{}) error {
+	nFields, err := decode(target, true)
 	if err != nil {
 		return err
 	}
@@ -63,7 +90,7 @@ func Decode(target interface{}) error {
 	return nil
 }
 
-func decode(target interface{}) (int, error) {
+func decode(target interface{}, strict bool) (int, error) {
 	s := reflect.ValueOf(target)
 	if s.Kind() != reflect.Ptr || s.IsNil() {
 		return 0, ErrInvalidTarget
@@ -77,6 +104,9 @@ func decode(target interface{}) (int, error) {
 	t := s.Type()
 	setFieldCount := 0
 	for i := 0; i < s.NumField(); i++ {
+		// Localize the umbrella `strict` value to the specific field.
+		strict := strict
+
 		f := s.Field(i)
 
 		switch f.Kind() {
@@ -89,8 +119,17 @@ func decode(target interface{}) (int, error) {
 			fallthrough
 
 		case reflect.Struct:
+			if !f.Addr().CanInterface() {
+				continue
+			}
+
 			ss := f.Addr().Interface()
-			n, err := decode(ss)
+			_, custom := ss.(Decoder)
+			if custom {
+				break
+			}
+
+			n, err := decode(ss, strict)
 			if err != nil {
 				return 0, err
 			}
@@ -121,6 +160,9 @@ func decode(target interface{}) (int, error) {
 				hasDefault = true
 				defaultValue = o[8:]
 			}
+			if !strict {
+				strict = strings.HasPrefix(o, "strict")
+			}
 		}
 
 		if required && hasDefault {
@@ -138,10 +180,22 @@ func decode(target interface{}) (int, error) {
 
 		setFieldCount++
 
-		if f.Kind() == reflect.Slice {
+		unmarshaler, implementsUnmarshaler := f.Addr().Interface().(encoding.TextUnmarshaler)
+		decoder, implmentsDecoder := f.Addr().Interface().(Decoder)
+		if implmentsDecoder {
+			if err := decoder.Decode(env); err != nil {
+				return 0, err
+			}
+		} else if implementsUnmarshaler {
+			if err := unmarshaler.UnmarshalText([]byte(env)); err != nil {
+				return 0, err
+			}
+		} else if f.Kind() == reflect.Slice {
 			decodeSlice(&f, env)
 		} else {
-			decodePrimitiveType(&f, env)
+			if err := decodePrimitiveType(&f, env); err != nil && strict {
+				return 0, err
+			}
 		}
 	}
 
@@ -170,40 +224,45 @@ func decodeSlice(f *reflect.Value, env string) {
 	f.Set(slice)
 }
 
-func decodePrimitiveType(f *reflect.Value, env string) {
+func decodePrimitiveType(f *reflect.Value, env string) error {
 	switch f.Kind() {
 	case reflect.Bool:
 		v, err := strconv.ParseBool(env)
-		if err == nil {
-			f.SetBool(v)
+		if err != nil {
+			return err
 		}
+		f.SetBool(v)
 
 	case reflect.Float32, reflect.Float64:
 		bits := f.Type().Bits()
 		v, err := strconv.ParseFloat(env, bits)
-		if err == nil {
-			f.SetFloat(v)
+		if err != nil {
+			return err
 		}
+		f.SetFloat(v)
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if t := f.Type(); t.PkgPath() == "time" && t.Name() == "Duration" {
 			v, err := time.ParseDuration(env)
-			if err == nil {
-				f.SetInt(int64(v))
+			if err != nil {
+				return err
 			}
+			f.SetInt(int64(v))
 		} else {
 			bits := f.Type().Bits()
 			v, err := strconv.ParseInt(env, 0, bits)
-			if err == nil {
-				f.SetInt(v)
+			if err != nil {
+				return err
 			}
+			f.SetInt(v)
 		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		bits := f.Type().Bits()
 		v, err := strconv.ParseUint(env, 0, bits)
-		if err == nil {
-			f.SetUint(v)
+		if err != nil {
+			return err
 		}
+		f.SetUint(v)
 
 	case reflect.String:
 		f.SetString(env)
@@ -211,17 +270,28 @@ func decodePrimitiveType(f *reflect.Value, env string) {
 	case reflect.Ptr:
 		if t := f.Type().Elem(); t.Kind() == reflect.Struct && t.PkgPath() == "net/url" && t.Name() == "URL" {
 			v, err := url.Parse(env)
-			if err == nil {
-				f.Set(reflect.ValueOf(v))
+			if err != nil {
+				return err
 			}
+			f.Set(reflect.ValueOf(v))
 		}
 	}
+	return nil
 }
 
 // MustDecode calls Decode and terminates the process if any errors
 // are encountered.
 func MustDecode(target interface{}) {
 	err := Decode(target)
+	if err != nil {
+		FailureFunc(err)
+	}
+}
+
+// MustStrictDecode calls StrictDecode and terminates the process if any errors
+// are encountered.
+func MustStrictDecode(target interface{}) {
+	err := StrictDecode(target)
 	if err != nil {
 		FailureFunc(err)
 	}
