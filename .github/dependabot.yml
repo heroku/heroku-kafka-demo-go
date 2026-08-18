@@ -1,0 +1,42 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 1
+    labels:
+      - "dependencies"
+    groups:
+      version-updates:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      security-updates:
+        applies-to: security-updates
+        update-types:
+          - "minor"
+          - "patch"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 1
+    labels:
+      - "dependencies"
+    groups:
+      version-updates:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      security-updates:
+        applies-to: security-updates
+        update-types:
+          - "minor"
+          - "patch"

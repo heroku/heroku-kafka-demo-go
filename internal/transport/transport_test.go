@@ -35,7 +35,7 @@ func TestMessageBuffer(t *testing.T) {
 		}
 
 		if mb.receivedMessages[0].Value != testValue {
-			t.Errorf("Expected message value to be 'test', got %s", mb.receivedMessages[0].Value)
+			t.Errorf("Expected message value to be %q, got %s", testValue, mb.receivedMessages[0].Value)
 		}
 	})
 
@@ -62,7 +62,7 @@ func TestMessageBuffer(t *testing.T) {
 		}
 
 		if mb.receivedMessages[0].Value != testValue {
-			t.Errorf("Expected message value to be 'test', got %s", mb.receivedMessages[0].Value)
+			t.Errorf("Expected message value to be %q, got %s", testValue, mb.receivedMessages[0].Value)
 		}
 	})
 

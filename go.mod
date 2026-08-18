@@ -1,6 +1,6 @@
 module github.com/heroku/heroku-kafka-demo-go
 
-// +heroku goVersion go1.21
+// +heroku goVersion go1.25
 go 1.25.0
 
 require (
