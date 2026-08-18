@@ -10,6 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// testValue is a reusable message value for buffer tests
+const testValue = "test"
+
 func TestMessageBuffer(t *testing.T) {
 	t.Run("SaveMessage", func(t *testing.T) {
 		mb := MessageBuffer{
@@ -20,7 +23,7 @@ func TestMessageBuffer(t *testing.T) {
 			Metadata: MessageMetadata{
 				ReceivedAt: time.Now(),
 			},
-			Value:     "test",
+			Value:     testValue,
 			Partition: 0,
 			Offset:    0,
 		}
@@ -31,7 +34,7 @@ func TestMessageBuffer(t *testing.T) {
 			t.Errorf("Expected 1 message, got %d", len(mb.receivedMessages))
 		}
 
-		if mb.receivedMessages[0].Value != "test" {
+		if mb.receivedMessages[0].Value != testValue {
 			t.Errorf("Expected message value to be 'test', got %s", mb.receivedMessages[0].Value)
 		}
 	})
@@ -45,7 +48,7 @@ func TestMessageBuffer(t *testing.T) {
 			Metadata: MessageMetadata{
 				ReceivedAt: time.Now(),
 			},
-			Value:     "test",
+			Value:     testValue,
 			Partition: 0,
 			Offset:    0,
 		}
@@ -58,7 +61,7 @@ func TestMessageBuffer(t *testing.T) {
 			t.Errorf("Expected 2 messages, got %d", len(mb.receivedMessages))
 		}
 
-		if mb.receivedMessages[0].Value != "test" {
+		if mb.receivedMessages[0].Value != testValue {
 			t.Errorf("Expected message value to be 'test', got %s", mb.receivedMessages[0].Value)
 		}
 	})
@@ -72,7 +75,7 @@ func TestMessageBuffer(t *testing.T) {
 			Metadata: MessageMetadata{
 				ReceivedAt: time.Now(),
 			},
-			Value:     "test",
+			Value:     testValue,
 			Partition: 0,
 			Offset:    0,
 		}

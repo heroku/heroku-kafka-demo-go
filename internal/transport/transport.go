@@ -16,6 +16,9 @@ import (
 	"github.com/heroku/heroku-kafka-demo-go/internal/config"
 )
 
+// errorKey is the JSON field used for error responses
+const errorKey = "error"
+
 // Message represents a Kafka message
 type Message struct {
 	Metadata  MessageMetadata `json:"metadata"`
@@ -270,13 +273,13 @@ func (kc *KafkaClient) SendMessage(topic, key string, message []byte) error {
 func (kc *KafkaClient) PostMessage(c *gin.Context) {
 	message, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{errorKey: err.Error()})
 		return
 	}
 
 	err = kc.SendMessage(c.Param("topic"), c.Request.RemoteAddr, message)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{errorKey: err.Error()})
 		return
 	}
 }
@@ -285,13 +288,13 @@ func (kc *KafkaClient) PostMessage(c *gin.Context) {
 func (kc *KafkaClient) PostAsyncMessage(c *gin.Context) {
 	message, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{errorKey: err.Error()})
 		return
 	}
 
 	err = kc.SendAsyncMessage(c.Param("topic"), c.Request.RemoteAddr, message)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{errorKey: err.Error()})
 		return
 	}
 }
