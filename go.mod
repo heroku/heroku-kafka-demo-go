@@ -52,4 +52,3 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/chenzhuoyu/iasm v0.9.1 => github.com/cloudwego/iasm v0.2.0
