@@ -1,7 +1,7 @@
 module github.com/heroku/heroku-kafka-demo-go
 
-// +heroku goVersion go1.25
-go 1.25.0
+// +heroku goVersion go1.26
+go 1.26.7
 
 require (
 	github.com/IBM/sarama v1.42.1
