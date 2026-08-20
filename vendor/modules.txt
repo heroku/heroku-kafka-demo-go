@@ -325,4 +325,3 @@ google.golang.org/protobuf/proto
 google.golang.org/protobuf/reflect/protoreflect
 google.golang.org/protobuf/reflect/protoregistry
 google.golang.org/protobuf/runtime/protoiface
-# github.com/chenzhuoyu/iasm v0.9.1 => github.com/cloudwego/iasm v0.2.0
